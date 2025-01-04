@@ -1,44 +1,49 @@
-from database import Password, Key
 from cryptography.fernet import Fernet
-import os
+
 
 class PasswordManager:
-    def __init__(self, session, user):
-        self.session = session
-        self.user = user
+
+    def __init__(self):
         self.key = None
+        self.password_file = None
+        self.password_dict = {}
+        self.keyloaded = False
 
-    def load_key(self, key_id):
-        key = self.session.query(Key).filter_by(key_id=key_id, user_id=self.user.user_id).first()
-        if key:
-            self.key = key.key_value.encode()
-            print(f"Key {key.key_id} selected successfully.")
-            return True
-        else:
-            print("Invalid key ID. Please try again.")
-            return False
+    def create_key(self, path):
+        self.key = Fernet.generate_key()
+        with open(path, 'wb') as f:
+            f.write(self.key)
+        self.keyloaded = True
 
-    def add_new_key(self):
-        new_key_value = Fernet.generate_key().decode()
-        new_key = Key(key_value=new_key_value, user_id=self.user.user_id)
-        self.session.add(new_key)
-        self.session.commit()
-        print(f"New key created successfully! Key ID: {new_key.key_id}")
+    def load_key(self, path):
+        with open(path, 'rb') as f:
+            self.key = f.read()
+        self.keyloaded = True
 
-    def add_password(self, site, password_value):
-        if not self.key:
-            print("No key selected. Please select a key first.")
-            return
-        encrypted_password = Fernet(self.key).encrypt(password_value.encode()).decode()
-        new_password = Password(
-            site=site,
-            password_value=encrypted_password,
-            key_id=self.get_current_key_id(),
-            user_id=self.user.user_id
-        )
-        self.session.add(new_password)
-        self.session.commit()
-        print("Password added successfully.")
+
+    def create_password_file(self, path, initial_values=None):
+        self.password_file = path
+        if initial_values is not None:
+            for site in initial_values:
+                print(initial_values[site])
+                self.add_password(site, initial_values[site])
+
+    def load_password_file(self, path):
+        self.password_file = path
+        with open(path, 'r') as f:
+            for line in f:
+                site, encrypted = line.split(":")
+                self.password_dict[site] = Fernet(self.key).decrypt(encrypted.encode()).decode()
+
+    def add_password(self, site, password):
+        if site in self.password_dict:  
+            print(f"Warning: A password for the site '{site}' already exists.")  
+            return 
+        self.password_dict[site] = password
+        if self.password_file is not None:
+            with open(self.password_file, 'a+') as f:
+                encrypted = Fernet(self.key).encrypt(password.encode()).decode()
+                f.write(f"{site}:{encrypted}\n")
 
     def get_password(self, site):
         return self.password_dict.get(site, "Password not found.")
@@ -81,22 +86,6 @@ class PasswordManager:
                 has_numeric_characters = True
         return has_numeric_characters and has_good_length and\
               has_capital_letters and has_special_char and has_small_letters
-    def get_file_size(self, path):
-    #First checks if the file exists 
-    #If it does, then displays its size
-    #otherwise raises an error 
-        if os.path.exists(path):
-            return os.path.getsize(path)
-        else:
-            raise FileNotFoundError(f"The file '{path}' does not exist.")
-        password_entry = self.session.query(Password).filter_by(site=site, user_id=self.user.user_id).order_by(Password.created_date.desc()).first()
-        if password_entry:
-            key_entry = self.session.query(Key).filter_by(key_id=password_entry.key_id).first()
-            fernet = Fernet(key_entry.key_value.encode())
-            decrypted_password = fernet.decrypt(password_entry.password_value.encode()).decode()
-            return decrypted_password
-        else:
-            return "Password not found."
 
     def get_current_key_id(self):
         if not self.key:
